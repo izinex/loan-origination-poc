@@ -141,6 +141,9 @@ const getQualitativeInputs = (propertyType: string): string[] => {
   ];
 };
 
+
+
+
 // Helper to compute dynamic weights for BRG inputs (evenly distributed)
 const getQualitativeWeights = (propertyType: string): Record<string, number> => {
   if (!propertyType) return {};
@@ -168,6 +171,7 @@ const CRE: React.FC = () => {
 
   // Dynamic qualitative inputs (key: rating)
   const [qualitativeValues, setQualitativeValues] = useState<Record<string, number>>({});
+  const [qualitativeMetrics, setQualitativeMetrics] = useState<Record<string, string>>({});
 
   // Override and feedback states
   const [override, setOverride] = useState<boolean>(false);
@@ -294,34 +298,44 @@ const CRE: React.FC = () => {
         ? Number(overrideFRG)
         : Math.round(quantitativeFRG * 0.7 + (quantitativeFRG + adjustmentScoreFRG) * 0.3);
 
-    // Build dynamic qualitative data (strip spaces from keys)
-    const qualitativeData: Record<string, number> = {};
-    getQualitativeInputs(selectedProperty).forEach((input) => {
-      qualitativeData[input.replace(/\s+/g, "")] = qualitativeValues[input] || 0;
-    });
+   // Build dynamic qualitative data for ratings
+  const qualitativeData: Record<string, number> = {};
+  getQualitativeInputs(selectedProperty).forEach((input) => {
+    qualitativeData[input.replace(/\s+/g, "")] = qualitativeValues[input] || 0;
+  });
 
-    const loanData = {
-      lineOfBusiness: lineOfBusiness, // Passed from Home.tsx
-      propertyType: selectedProperty,
-      loanType: selectedLoanType,
-      dscr: Number(dscr),
-      occupancy: Number(occupancy),
-      ltv: Number(ltv),
-      ...qualitativeData,
-      quantitative_brg: quantitativeBRG,
-      adjustment_score_brg: adjustmentScoreBRG,
-      q_adjusted_brg: qAdjustedBRG,
-      weighted_brg: weightedBRG,
-      final_brg: finalBRG,
-      quantitative_frg: quantitativeFRG,
-      adjustment_score_frg: adjustmentScoreFRG,
-      q_adjusted_frg: quantitativeFRG + adjustmentScoreFRG,
-      final_frg: finalFRG,
-      overrideEnabled: override,
-      override_brg: override ? Number(overrideBRG) : null,
-      override_frg: override ? Number(overrideFRG) : null,
-      justification: override ? justification : null,
-    };
+  // Build dynamic qualitative data for metric values; append '_Value' to keys
+  const qualitativeMetricsData: Record<string, number | null> = {};
+  getQualitativeInputs(selectedProperty).forEach((input) => {
+    const metricVal = qualitativeMetrics[input];
+    qualitativeMetricsData[`${input.replace(/\s+/g, "")}_Value`] =
+      metricVal ? parseFloat(metricVal) : null;
+  });
+
+  // Prepare full payload including both rating and metric values
+  const loanData = {
+    lineOfBusiness: lineOfBusiness,
+    propertyType: selectedProperty,
+    loanType: selectedLoanType,
+    dscr: Number(dscr),
+    occupancy: Number(occupancy),
+    ltv: Number(ltv),
+    ...qualitativeData,
+    ...qualitativeMetricsData,
+    quantitative_brg: quantitativeBRG,
+    adjustment_score_brg: adjustmentScoreBRG,
+    q_adjusted_brg: qAdjustedBRG,
+    weighted_brg: weightedBRG,
+    final_brg: finalBRG,
+    quantitative_frg: quantitativeFRG,
+    adjustment_score_frg: adjustmentScoreFRG,
+    q_adjusted_frg: quantitativeFRG + adjustmentScoreFRG,
+    final_frg: finalFRG,
+    overrideEnabled: override,
+    override_brg: override ? Number(overrideBRG) : null,
+    override_frg: override ? Number(overrideFRG) : null,
+    justification: override ? justification : null,
+  };
 
     try {
       setIsSubmitting(true);
@@ -356,7 +370,11 @@ const CRE: React.FC = () => {
               <InputLabel>Property Type</InputLabel>
               <Select
                 value={selectedProperty}
-                onChange={(e) => setSelectedProperty(e.target.value)}
+                onChange={(e) => {
+                  setSelectedProperty(e.target.value);
+                  setQualitativeValues({});
+                  setQualitativeMetrics({});
+                }}
                 label="Property Type"
               >
                 {propertyTypes.map((type) => (
@@ -372,7 +390,11 @@ const CRE: React.FC = () => {
               <InputLabel>Loan Type</InputLabel>
               <Select
                 value={selectedLoanType}
-                onChange={(e) => setSelectedLoanType(e.target.value)}
+                onChange={(e) => {
+                  setSelectedLoanType(e.target.value);
+                  setQualitativeValues({});
+                  setQualitativeMetrics({});
+                }}
                 label="Loan Type"
               >
                 {loanTypes.map((loan) => (
@@ -384,101 +406,123 @@ const CRE: React.FC = () => {
             </FormControl>
           </Grid>
         </Grid>
+
+        {/* Only show quantitative and qualitative inputs if both selections are made */}
         {selectedProperty && selectedLoanType && (
-        <Grid container spacing={4} sx={{ mt: 3 }}>
-          <Grid item xs={12} md={6}>
-            <TextField
-              label="DSCR"
-              type="number"
-              fullWidth
-              sx={{ mb: 2 }}
-              error={Boolean(dscrError)}
-              helperText={dscrError}
-              onChange={(e) => {
-                const value = parseFloat(e.target.value);
-                if (isNaN(value)) {
-                  setDscr("");
-                  setDscrError("");
-                } else if (value < 0) {
-                  setDscr(value);
-                  setDscrError("Invalid entry; enter a number ≥ 0.");
-                } else {
-                  setDscr(value);
-                  setDscrError("");
-                }
-              }}
-            />
-            <TextField
-              label="Occupancy Rate (%)"
-              type="number"
-              fullWidth
-              sx={{ mb: 2 }}
-              error={Boolean(occupancyError)}
-              helperText={occupancyError}
-              onChange={(e) => {
-                const value = parseFloat(e.target.value);
-                if (isNaN(value)) {
-                  setOccupancy("");
-                  setOccupancyError("");
-                } else if (value < 0 || value > 100) {
-                  setOccupancy(value);
-                  setOccupancyError("Enter a number between 0 and 100.");
-                } else {
-                  setOccupancy(value);
-                  setOccupancyError("");
-                }
-              }}
-            />
-            <TextField
-              label="LTV (%)"
-              type="number"
-              fullWidth
-              sx={{ mb: 2 }}
-              error={Boolean(ltvError)}
-              helperText={ltvError}
-              onChange={(e) => {
-                const value = parseFloat(e.target.value);
-                if (isNaN(value)) {
-                  setLtv("");
-                  setLtvError("");
-                } else if (value < 0) {
-                  setLtv(value);
-                  setLtvError("Enter a number ≥ 0.");
-                } else {
-                  setLtv(value);
-                  setLtvError("");
-                }
-              }}
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            {getQualitativeInputs(selectedProperty).map((input) => (
-              <FormControl key={input} fullWidth sx={{ mb: 2 }} variant="outlined">
-                <InputLabel>{input}</InputLabel>
-                <Select
-                  value={qualitativeValues[input] || ""}
-                  onChange={(e) =>
-                    setQualitativeValues((prev) => ({
-                      ...prev,
-                      [input]: parseInt(e.target.value as string),
-                    }))
-                  }
-                  label={input}
-                  displayEmpty
-                  sx={{ textAlign: "left" }}
-                >
-                  {qualitativeOptions.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            ))}
-          </Grid>
-        </Grid>
+          <>
+            <Grid container spacing={4} sx={{ mt: 3 }}>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="DSCR"
+                  type="number"
+                  fullWidth
+                  sx={{ mb: 2 }}
+                  error={Boolean(dscrError)}
+                  helperText={dscrError}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    if (isNaN(value)) {
+                      setDscr("");
+                      setDscrError("");
+                    } else if (value < 0) {
+                      setDscr(value);
+                      setDscrError("Invalid entry; enter a number ≥ 0.");
+                    } else {
+                      setDscr(value);
+                      setDscrError("");
+                    }
+                  }}
+                />
+                <TextField
+                  label="Occupancy Rate (%)"
+                  type="number"
+                  fullWidth
+                  sx={{ mb: 2 }}
+                  error={Boolean(occupancyError)}
+                  helperText={occupancyError}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    if (isNaN(value)) {
+                      setOccupancy("");
+                      setOccupancyError("");
+                    } else if (value < 0 || value > 100) {
+                      setOccupancy(value);
+                      setOccupancyError("Enter a number between 0 and 100.");
+                    } else {
+                      setOccupancy(value);
+                      setOccupancyError("");
+                    }
+                  }}
+                />
+                <TextField
+                  label="LTV (%)"
+                  type="number"
+                  fullWidth
+                  sx={{ mb: 2 }}
+                  error={Boolean(ltvError)}
+                  helperText={ltvError}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    if (isNaN(value)) {
+                      setLtv("");
+                      setLtvError("");
+                    } else if (value < 0) {
+                      setLtv(value);
+                      setLtvError("Enter a number ≥ 0.");
+                    } else {
+                      setLtv(value);
+                      setLtvError("");
+                    }
+                  }}
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                {getQualitativeInputs(selectedProperty).map((input) => (
+                  <Box
+                    key={input}
+                    sx={{ display: "flex", alignItems: "center", gap: 2, mb: 2 }}
+                  >
+                    <FormControl fullWidth variant="outlined">
+                      <InputLabel>{input}</InputLabel>
+                      <Select
+                        value={qualitativeValues[input] || ""}
+                        onChange={(e) =>
+                          setQualitativeValues((prev) => ({
+                            ...prev,
+                            [input]: parseInt(e.target.value as string),
+                          }))
+                        }
+                        label={input}
+                        displayEmpty
+                        sx={{ textAlign: "left" }}
+                      >
+                        {qualitativeOptions.map((option) => (
+                          <MenuItem key={option} value={option}>
+                            {option}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      label={`${input} Value`}
+                      variant="outlined"
+                      size="medium"
+                      sx={{ width: "300px" }}
+                      value={qualitativeMetrics[input] || ""}
+                      onChange={(e) =>
+                        setQualitativeMetrics((prev) => ({
+                          ...prev,
+                          [input]: e.target.value,
+                        }))
+                      }
+                    />
+                  </Box>
+                ))}
+              </Grid>
+            </Grid>
+            {/* Rest of your rendering for computed values and override fields remains unchanged */}
+          </>
         )}
-        
         <Box sx={{ display: "flex", justifyContent: "center", gap: 6, mt: 4 }}>
           <Box
             sx={{

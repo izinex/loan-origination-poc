@@ -31,16 +31,16 @@ def get_snowflake_connection():
         schema="DRRSCHEMA"
     )
 
-# Updated LoanApplication model with dynamic qualitative fields and lineOfBusiness
+# Updated LoanApplication model with new qualitative metric fields and lineOfBusiness
 class LoanApplication(BaseModel):
-    lineOfBusiness: str  # New field from Home.tsx
+    lineOfBusiness: str
     propertyType: str
     loanType: str
     dscr: float
     occupancy: float
     ltv: float
 
-    # Optional qualitative inputs (names without spaces)
+    # Existing qualitative ratings (optional)
     LeaseExpiration: int | None = None
     TenantRating: int | None = None
     AccessToCapitalMarkets: int | None = None
@@ -50,6 +50,17 @@ class LoanApplication(BaseModel):
     NumberOfUnits: int | None = None
     EconomicOutlook: int | None = None
     CollateralValue: int | None = None
+
+    # New qualitative metric values (optional)
+    LeaseExpiration_Value: float | None = None
+    TenantRating_Value: float | None = None
+    AccessToCapitalMarkets_Value: float | None = None
+    Liquidity_Value: float | None = None
+    MarketRent_Value: float | None = None
+    GuarantorNetWorth_Value: float | None = None
+    NumberOfUnits_Value: float | None = None
+    EconomicOutlook_Value: float | None = None
+    CollateralValue_Value: float | None = None
 
     # BRG Fields
     quantitative_brg: float
@@ -79,11 +90,15 @@ def submit_loan(data: LoanApplication):
         loan_id = str(uuid.uuid4())
         submitted_at = datetime.now()
 
-        # Create dictionary of non-null fields from the incoming data
+        # Build dictionary of all non-null fields from the incoming data
         all_fields = {k: v for k, v in data.dict().items() if v is not None}
+        # Add submitted_at field dynamically
+        all_fields["SUBMITTED_AT"] = submitted_at
 
-        # Build the SQL query dynamically
+        # Build the SQL query dynamically:
+        # Create a list of column names with "ID" as the first column.
         fields = ", ".join(["ID"] + list(all_fields.keys()))
+        # Create placeholders for each value
         placeholders = ", ".join(["%s"] * (len(all_fields) + 1))
 
         query = f"""
