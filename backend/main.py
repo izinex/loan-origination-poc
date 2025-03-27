@@ -5,22 +5,22 @@ import uuid
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
 
 app = FastAPI()
-    
-# Enable CORS (Allow frontend to communicate with FastAPI)
+
+# Enable CORS for your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Allow requests from React frontend
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Snowflake connection function
 def get_snowflake_connection():
     return snowflake.connector.connect(
         user=os.getenv("SNOWFLAKE_USER"),
@@ -31,23 +31,31 @@ def get_snowflake_connection():
         schema="DRRSCHEMA"
     )
 
-# Loan Application Data Model
+# Updated LoanApplication model with dynamic qualitative fields and lineOfBusiness
 class LoanApplication(BaseModel):
+    lineOfBusiness: str  # New field from Home.tsx
     propertyType: str
     loanType: str
     dscr: float
     occupancy: float
     ltv: float
-    leaseExpiration: int
-    tenantRating: int
-    accessToCapitalMarkets: int
-    liquidity: int
+
+    # Optional qualitative inputs (names without spaces)
+    LeaseExpiration: int | None = None
+    TenantRating: int | None = None
+    AccessToCapitalMarkets: int | None = None
+    Liquidity: int | None = None
+    MarketRent: int | None = None
+    GuarantorNetWorth: int | None = None
+    NumberOfUnits: int | None = None
+    EconomicOutlook: int | None = None
+    CollateralValue: int | None = None
 
     # BRG Fields
     quantitative_brg: float
     adjustment_score_brg: float
     q_adjusted_brg: float
-    weighted_brg: float    # New field added for the weighted BRG
+    weighted_brg: float
     final_brg: float
 
     # FRG Fields
@@ -62,44 +70,37 @@ class LoanApplication(BaseModel):
     override_frg: float | None = None
     justification: str | None = None
 
-# API route to save loan application to Snowflake
 @app.post("/submit-loan")
 def submit_loan(data: LoanApplication):
     try:
         conn = get_snowflake_connection()
         cur = conn.cursor()
-        
-        # Generate a unique ID for each loan
-        loan_id = str(uuid.uuid4())
 
-        # Insert data into Snowflake, including the new weighted_brg field.
-        cur.execute("""
+        loan_id = str(uuid.uuid4())
+        submitted_at = datetime.now()
+
+        # Create dictionary of non-null fields from the incoming data
+        all_fields = {k: v for k, v in data.dict().items() if v is not None}
+
+        # Build the SQL query dynamically
+        fields = ", ".join(["ID"] + list(all_fields.keys()))
+        placeholders = ", ".join(["%s"] * (len(all_fields) + 1))
+
+        query = f"""
             INSERT INTO DRR.DRRSCHEMA.LoanApplications (
-                id, propertyType, loanType, dscr, occupancy, ltv,
-                leaseExpiration, tenantRating, accessToCapitalMarkets, liquidity,
-                quantitative_brg, adjustment_score_brg, q_adjusted_brg, weighted_brg, final_brg,
-                quantitative_frg, adjustment_score_frg, q_adjusted_frg, final_frg,
-                overrideEnabled, override_brg, override_frg, justification
+                {fields}
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-                %s, %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s, %s
+                {placeholders}
             )
-        """, (
-            loan_id, data.propertyType, data.loanType, data.dscr, data.occupancy, data.ltv,
-            data.leaseExpiration, data.tenantRating, data.accessToCapitalMarkets, data.liquidity,
-            data.quantitative_brg, data.adjustment_score_brg, data.q_adjusted_brg, data.weighted_brg, data.final_brg,
-            data.quantitative_frg, data.adjustment_score_frg, data.q_adjusted_frg, data.final_frg,
-            data.overrideEnabled, data.override_brg if data.override_brg is not None else None,
-            data.override_frg if data.override_frg is not None else None,
-            data.justification if data.justification else None
-        ))
-        
+        """
+
+        values = [loan_id] + list(all_fields.values())
+
+        cur.execute(query, values)
         conn.commit()
         cur.close()
         conn.close()
-        
+
         return {"message": "Loan application submitted successfully", "loan_id": loan_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

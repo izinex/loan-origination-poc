@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Snackbar, Alert } from "@mui/material";
+import { useNavigate, useLocation } from "react-router-dom";
+import { SelectChangeEvent } from "@mui/material/Select";
 import {
   Container,
   Typography,
@@ -14,10 +14,14 @@ import {
   Button,
   Switch,
   FormControlLabel,
+  Snackbar,
+  Alert,
 } from "@mui/material";
-import axios from "axios"; // API request handling
+import axios from "axios";
 import Header from "../components/Header";
 
+// ===== Existing constants =====
+// (Ensure these arrays/objects exist or adjust as needed.)
 const propertyTypes = [
   "Single-Family",
   "Multi-Family",
@@ -55,14 +59,14 @@ const occupancyBins = [
 ];
 
 const propertyTypeBins: Record<string, number> = {
+  "Single-Family": 2.76797217,
+  "Multi-Family": 1.13998781,
   Retail: 0.81092195,
   Office: 1.20790535,
   Other: 2.22592975,
-  "Multi-Family": 1.13998781,
   Hotel: 1.71163097,
   Condo: 3.24368739,
   Industrial: 1.71280577,
-  "Single-Family": 2.76797217,
 };
 
 const ltvBins = [
@@ -79,106 +83,139 @@ const qualitativeAdjustment: Record<number, number> = {
   5: 1.2,
   6: 2,
 };
-const qualitativeWeights: Record<string, number> = {
-  "Lease Expiration": 0.4,
-  "Tenant Rating": 0.35,
-  "Access to Capital Markets": 0.25,
-};
 
-const qualitativeInputs = [
-  "Lease Expiration",
-  "Tenant Rating",
-  "Access to Capital Markets",
-  "Liquidity",
-];
+const getBinValue = (
+    value: number,
+    bins: { max: number; value: number }[]
+  ): number => {
+    const bin = bins.find((b) => value < b.max);
+    return bin ? bin.value : 0;
+  };
 const qualitativeOptions = [1, 2, 3, 4, 5, 6];
 
-const CRE: React.FC = () => {
-  const navigate = useNavigate(); // Hook for navigation
+// ===== New Dynamic Qualitative Inputs =====
+const qualitativeInputsByPropertyType: Record<
+  string,
+  { brg: string[]; frg: string[] }
+> = {
+  "Single-Family": {
+    brg: ["Market Rent", "Guarantor Net Worth"],
+    frg: ["Liquidity"],
+  },
+  "Multi-Family": {
+    brg: ["Number of Units", "Market Rent", "Access to Capital Markets"],
+    frg: ["Liquidity"],
+  },
+  Retail: {
+    brg: ["Lease Expiration", "Tenant Rating", "Access to Capital Markets"],
+    frg: ["Collateral Value"],
+  },
+  Office: {
+    brg: ["Lease Expiration", "Tenant Rating", "Number of Units"],
+    frg: ["Collateral Value"],
+  },
+  Other: {
+    brg: ["Economic Outlook", "Guarantor Net Worth", "Market Rent"],
+    frg: ["Liquidity"],
+  },
+  Hotel: {
+    brg: ["Number of Units", "Market Rent", "Access to Capital Markets"],
+    frg: ["Liquidity"],
+  },
+  Condo: {
+    brg: ["Number of Units", "Market Rent", "Access to Capital Markets"],
+    frg: ["Liquidity"],
+  },
+  Industrial: {
+    brg: ["Lease Expiration", "Tenant Rating", "Access to Capital Markets"],
+    frg: ["Collateral Value"],
+  },
+};
 
+// Helper to return all qualitative inputs (BRG and FRG) for a property type
+const getQualitativeInputs = (propertyType: string): string[] => {
+  if (!propertyType) return [];
+  return [
+    ...(qualitativeInputsByPropertyType[propertyType]?.brg || []),
+    ...(qualitativeInputsByPropertyType[propertyType]?.frg || []),
+  ];
+};
+
+// Helper to compute dynamic weights for BRG inputs (evenly distributed)
+const getQualitativeWeights = (propertyType: string): Record<string, number> => {
+  if (!propertyType) return {};
+  const weights: Record<string, number> = {};
+  const brgInputs = qualitativeInputsByPropertyType[propertyType]?.brg || [];
+  const brgWeight = brgInputs.length > 0 ? 1 / brgInputs.length : 0;
+  brgInputs.forEach((input) => {
+    weights[input] = brgWeight;
+  });
+  return weights;
+};
+
+// ===== Component Start =====
+const CRE: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const lineOfBusiness = location.state?.lineOfBusiness || "CRE";
+
+  // Quantitative inputs
   const [selectedProperty, setSelectedProperty] = useState<string>("");
   const [selectedLoanType, setSelectedLoanType] = useState("");
   const [dscr, setDscr] = useState<number | "">("");
   const [occupancy, setOccupancy] = useState<number | "">("");
   const [ltv, setLtv] = useState<number | "">("");
+
+  // Dynamic qualitative inputs (key: rating)
   const [qualitativeValues, setQualitativeValues] = useState<Record<string, number>>({});
+
+  // Override and feedback states
   const [override, setOverride] = useState<boolean>(false);
   const [overrideBRG, setOverrideBRG] = useState<number | "">("");
   const [overrideFRG, setOverrideFRG] = useState<number | "">("");
   const [justification, setJustification] = useState<string>("");
-
-  // New states for API feedback
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [snackbarOpen, setSnackbarOpen] = useState<boolean>(false);
   const [snackbarMessage, setSnackbarMessage] = useState<string>("");
   const [snackbarSeverity, setSnackbarSeverity] = useState<"success" | "error">("success");
-
-  // New error states for numeric validations
   const [dscrError, setDscrError] = useState("");
   const [occupancyError, setOccupancyError] = useState("");
   const [ltvError, setLtvError] = useState("");
 
-  const getBinValue = (
-    value: number,
-    bins: { max: number; value: number }[]
-  ) => bins.find((bin) => value < bin.max)?.value || 0;
-
+  // Compute BRG dynamically
   const computeBRG = (): number | null => {
     if (!selectedProperty || dscr === "" || occupancy === "") return null;
-
-    const dscrScore = getBinValue(dscr as number, dscrBins);
-    const occupancyScore = getBinValue(occupancy as number, occupancyBins);
+    const dscrScore = getBinValue(Number(dscr), dscrBins);
+    const occupancyScore = getBinValue(Number(occupancy), occupancyBins);
     const propertyTypeScore = propertyTypeBins[selectedProperty] || 0;
     const quantitativeBRG = dscrScore + occupancyScore + propertyTypeScore;
 
     let adjustmentScore = 0;
-    for (const key of Object.keys(qualitativeWeights)) {
+    const weights = getQualitativeWeights(selectedProperty);
+    const brgInputs = qualitativeInputsByPropertyType[selectedProperty]?.brg || [];
+    for (const key of brgInputs) {
       if (qualitativeValues[key] !== undefined) {
-        const rating = qualitativeValues[key];
-        adjustmentScore += (qualitativeAdjustment[rating] || 0) * qualitativeWeights[key];
+        adjustmentScore += (qualitativeAdjustment[qualitativeValues[key]] || 0) * weights[key];
       }
     }
     const qualitativeAdjustedBRG = quantitativeBRG + adjustmentScore;
     return Math.round(quantitativeBRG * 0.7 + qualitativeAdjustedBRG * 0.3);
   };
 
+  // Compute FRG dynamically
   const computeFRG = (): number | null => {
     if (ltv === "") return null;
-
-    const quantitativeFRG = getBinValue(ltv as number, ltvBins);
-
+    const quantitativeFRG = getBinValue(Number(ltv), ltvBins);
     let adjustmentScore = 0;
-    if (qualitativeValues["Liquidity"] !== undefined) {
-      const rating = qualitativeValues["Liquidity"];
-      adjustmentScore = qualitativeAdjustment[rating] || 0;
+    const frgInput = qualitativeInputsByPropertyType[selectedProperty]?.frg[0] || "";
+    if (frgInput && qualitativeValues[frgInput] !== undefined) {
+      adjustmentScore = qualitativeAdjustment[qualitativeValues[frgInput]] || 0;
     }
     const qualitativeAdjustedFRG = quantitativeFRG + adjustmentScore;
     return Math.round(quantitativeFRG * 0.7 + qualitativeAdjustedFRG * 0.3);
   };
 
-  const handleOverrideChange = (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    setOverride(event.target.checked);
-    if (!event.target.checked) {
-      setOverrideBRG("");
-      setOverrideFRG("");
-      setJustification("");
-    } else {
-      // Initialize with computed values
-      const calculatedBRG = computeBRG();
-      const calculatedFRG = computeFRG();
-      if (calculatedBRG !== null) setOverrideBRG(calculatedBRG);
-      if (calculatedFRG !== null) setOverrideFRG(calculatedFRG);
-    }
-  };
-
-  const displayBRG =
-    override && overrideBRG !== "" ? overrideBRG : computeBRG();
-  const displayFRG =
-    override && overrideFRG !== "" ? overrideFRG : computeFRG();
-
-  // Check for missing fields (this does not include the numeric range errors)
+  // Check for missing fields (including dynamic qualitative inputs)
   const getMissingFields = () => {
     const missing: string[] = [];
     if (!selectedProperty) missing.push("Property Type");
@@ -186,11 +223,14 @@ const CRE: React.FC = () => {
     if (dscr === "") missing.push("DSCR");
     if (occupancy === "") missing.push("Occupancy Rate (%)");
     if (ltv === "") missing.push("LTV (%)");
-    qualitativeInputs.forEach((input) => {
+
+    const inputs = getQualitativeInputs(selectedProperty);
+    inputs.forEach((input) => {
       if (qualitativeValues[input] === undefined) {
         missing.push(input);
       }
     });
+
     if (override) {
       if (overrideBRG === "") missing.push("Override BRG");
       if (overrideFRG === "") missing.push("Override FRG");
@@ -200,94 +240,89 @@ const CRE: React.FC = () => {
   };
 
   const missingFields = getMissingFields();
-  const isFormValid =
-    missingFields.length === 0 &&
-    !dscrError &&
-    !occupancyError &&
-    !ltvError;
-  // function to handle form submission Start
+  const isFormValid = missingFields.length === 0 && !dscrError && !occupancyError && !ltvError;
+
+  const handleOverrideChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setOverride(event.target.checked);
+    if (!event.target.checked) {
+      setOverrideBRG("");
+      setOverrideFRG("");
+      setJustification("");
+    } else {
+      const calculatedBRG = computeBRG();
+      const calculatedFRG = computeFRG();
+      if (calculatedBRG !== null) setOverrideBRG(calculatedBRG);
+      if (calculatedFRG !== null) setOverrideFRG(calculatedFRG);
+    }
+  };
+
+  const displayBRG = override && overrideBRG !== "" ? overrideBRG : computeBRG();
+  const displayFRG = override && overrideFRG !== "" ? overrideFRG : computeFRG();
+
   const handleSubmit = async () => {
     if (!isFormValid) return;
-  
-    // ------------------------------
-    // Compute Quantitative BRG Components
-    // ------------------------------
+
+    // Quantitative computation
     const dscrScore = getBinValue(Number(dscr), dscrBins);
     const occupancyScore = getBinValue(Number(occupancy), occupancyBins);
     const propertyTypeScore = propertyTypeBins[selectedProperty] || 0;
     const quantitativeBRG = dscrScore + occupancyScore + propertyTypeScore;
-  
-    // ------------------------------
-    // Compute Adjustment Score for BRG (only for qualitative inputs)
-    // ------------------------------
+
     let adjustmentScoreBRG = 0;
-    ["Lease Expiration", "Tenant Rating", "Access to Capital Markets"].forEach((key) => {
+    const weights = getQualitativeWeights(selectedProperty);
+    const brgInputs = qualitativeInputsByPropertyType[selectedProperty]?.brg || [];
+    brgInputs.forEach((key) => {
       if (qualitativeValues[key] !== undefined) {
-        adjustmentScoreBRG += (qualitativeAdjustment[qualitativeValues[key]] || 0) * (qualitativeWeights[key] || 0);
+        adjustmentScoreBRG += (qualitativeAdjustment[qualitativeValues[key]] || 0) * (weights[key] || 0);
       }
     });
-  
-    // ------------------------------
-    // Compute Weighted BRG from the Quantitative and Q_Adjusted values
-    // ------------------------------
     const qAdjustedBRG = quantitativeBRG + adjustmentScoreBRG;
     const weightedBRG = Math.round(quantitativeBRG * 0.7 + qAdjustedBRG * 0.3);
-  
-    // ------------------------------
-    // Compute FRG Components
-    // ------------------------------
+
     const quantitativeFRG = getBinValue(Number(ltv), ltvBins);
+    const frgInput = qualitativeInputsByPropertyType[selectedProperty]?.frg[0] || "";
     const adjustmentScoreFRG =
-      qualitativeValues["Liquidity"] !== undefined
-        ? (qualitativeAdjustment[qualitativeValues["Liquidity"]] || 0)
+      frgInput && qualitativeValues[frgInput] !== undefined
+        ? qualitativeAdjustment[qualitativeValues[frgInput]] || 0
         : 0;
-  
     const finalBRG =
       override && overrideBRG !== ""
         ? Number(overrideBRG)
         : Math.round(quantitativeBRG * 0.7 + qAdjustedBRG * 0.3);
-  
     const finalFRG =
       override && overrideFRG !== ""
         ? Number(overrideFRG)
-        : Math.round(
-            quantitativeFRG * 0.7 + (quantitativeFRG + adjustmentScoreFRG) * 0.3
-          );
-  
-    // ------------------------------
-    // Prepare Data for API Submission
-    // ------------------------------
+        : Math.round(quantitativeFRG * 0.7 + (quantitativeFRG + adjustmentScoreFRG) * 0.3);
+
+    // Build dynamic qualitative data (strip spaces from keys)
+    const qualitativeData: Record<string, number> = {};
+    getQualitativeInputs(selectedProperty).forEach((input) => {
+      qualitativeData[input.replace(/\s+/g, "")] = qualitativeValues[input] || 0;
+    });
+
     const loanData = {
+      lineOfBusiness: lineOfBusiness, // Passed from Home.tsx
       propertyType: selectedProperty,
       loanType: selectedLoanType,
       dscr: Number(dscr),
       occupancy: Number(occupancy),
       ltv: Number(ltv),
-      leaseExpiration: qualitativeValues["Lease Expiration"] || 0,
-      tenantRating: qualitativeValues["Tenant Rating"] || 0,
-      accessToCapitalMarkets: qualitativeValues["Access to Capital Markets"] || 0,
-      liquidity: qualitativeValues["Liquidity"] || 0,
-      
-      // BRG Fields
+      ...qualitativeData,
       quantitative_brg: quantitativeBRG,
       adjustment_score_brg: adjustmentScoreBRG,
       q_adjusted_brg: qAdjustedBRG,
-      weighted_brg: weightedBRG, // new field
+      weighted_brg: weightedBRG,
       final_brg: finalBRG,
-      
-      // FRG Fields
       quantitative_frg: quantitativeFRG,
       adjustment_score_frg: adjustmentScoreFRG,
       q_adjusted_frg: quantitativeFRG + adjustmentScoreFRG,
       final_frg: finalFRG,
-      
-      // Override Fields
       overrideEnabled: override,
       override_brg: override ? Number(overrideBRG) : null,
       override_frg: override ? Number(overrideFRG) : null,
-      justification: override ? justification : null
+      justification: override ? justification : null,
     };
-  
+
     try {
       setIsSubmitting(true);
       const response = await axios.post("http://localhost:8000/submit-loan", loanData);
@@ -303,29 +338,18 @@ const CRE: React.FC = () => {
       setIsSubmitting(false);
     }
   };
-  // End
 
   const handleSnackbarClose = () => {
     setSnackbarOpen(false);
   };
+
   return (
     <>
-      {/* Header now navigates back to home when clicked */}
       <Header title="Commercial Real Estate (CRE)" onTitleClick={() => navigate("/")} />
-
       <Container sx={{ mt: 10 }}>
-        <Typography
-          variant="h5"
-          sx={{
-            fontWeight: "bold",
-            color: "#003087",
-            textAlign: "center",
-            mb: 3,
-          }}
-        >
+        <Typography variant="h5" sx={{ fontWeight: "bold", color: "#003087", textAlign: "center", mb: 3 }}>
           Dual Risk Rating - Commercial Real Estate (CRE)
         </Typography>
-
         <Grid container spacing={4} sx={{ justifyContent: "center", mb: 3 }}>
           <Grid item xs={12} md={5}>
             <FormControl fullWidth>
@@ -343,7 +367,6 @@ const CRE: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-
           <Grid item xs={12} md={5}>
             <FormControl fullWidth>
               <InputLabel>Loan Type</InputLabel>
@@ -361,251 +384,223 @@ const CRE: React.FC = () => {
             </FormControl>
           </Grid>
         </Grid>
-
         {selectedProperty && selectedLoanType && (
-          <>
-            <Grid container spacing={4} sx={{ mt: 3 }}>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  label="DSCR"
-                  type="number"
-                  fullWidth
-                  sx={{ mb: 2 }}
-                  error={Boolean(dscrError)}
-                  helperText={dscrError}
-                  onChange={(e) => {
-                    const value = parseFloat(e.target.value);
-                    if (isNaN(value)) {
-                      setDscr("");
-                      setDscrError("");
-                    } else if (value < 0) {
-                      setDscr(value);
-                      setDscrError("Invalid entry please enter a number greater than or equal to 0.");
-                    } else {
-                      setDscr(value);
-                      setDscrError("");
-                    }
-                  }}
-                />
-                <TextField
-                  label="Occupancy Rate (%)"
-                  type="number"
-                  fullWidth
-                  sx={{ mb: 2 }}
-                  error={Boolean(occupancyError)}
-                  helperText={occupancyError}
-                  onChange={(e) => {
-                    const value = parseFloat(e.target.value);
-                    if (isNaN(value)) {
-                      setOccupancy("");
-                      setOccupancyError("");
-                    } else if (value < 0 || value > 100) {
-                      setOccupancy(value);
-                      setOccupancyError("Invalid entry please enter a number between 0 and 100.");
-                    } else {
-                      setOccupancy(value);
-                      setOccupancyError("");
-                    }
-                  }}
-                />
-                <TextField
-                  label="LTV (%)"
-                  type="number"
-                  fullWidth
-                  sx={{ mb: 2 }}
-                  error={Boolean(ltvError)}
-                  helperText={ltvError}
-                  onChange={(e) => {
-                    const value = parseFloat(e.target.value);
-                    if (isNaN(value)) {
-                      setLtv("");
-                      setLtvError("");
-                    } else if (value < 0) {
-                      setLtv(value);
-                      setLtvError("Invalid entry please enter a number greater than or equal to 0.");
-                    } else {
-                      setLtv(value);
-                      setLtvError("");
-                    }
-                  }}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                {qualitativeInputs.map((input) => (
-                  <FormControl key={input} fullWidth sx={{ mb: 2 }} variant="outlined">
-                    <InputLabel>{input}</InputLabel>
-                    <Select
-                      value={qualitativeValues[input] || ""}
-                      onChange={(e) =>
-                        setQualitativeValues((prev) => ({
-                          ...prev,
-                          [input]: parseInt(e.target.value as string),
-                        }))
-                      }
-                      label={input}
-                      displayEmpty
-                      sx={{ textAlign: "left" }}
-                    >
-                      {qualitativeOptions.map((option) => (
-                        <MenuItem key={option} value={option}>
-                          {option}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                ))}
-              </Grid>
-            </Grid>
-
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "center",
-                gap: 6,
-                mt: 4,
-              }}
-            >
-              <Box
-                sx={{
-                  bgcolor: "#449DF8",
-                  color: "black",
-                  padding: "25px 50px",
-                  textAlign: "center",
-                  fontWeight: "bold",
-                  borderRadius: "15px",
-                  boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.2)",
-                  width: "220px",
-                  height: "120px",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "center",
-                }}
-              >
-                <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1, fontSize: "1.5rem" }}>
-                  BRG
-                </Typography>
-                <Typography sx={{ fontSize: "3.5rem", fontWeight: "bold", lineHeight: "1" }}>
-                  {displayBRG}
-                </Typography>
-              </Box>
-
-              <Box
-                sx={{
-                  bgcolor: "#F89F44",
-                  color: "black",
-                  padding: "25px 50px",
-                  textAlign: "center",
-                  fontWeight: "bold",
-                  borderRadius: "15px",
-                  boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.2)",
-                  width: "220px",
-                  height: "120px",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "center",
-                }}
-              >
-                <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1, fontSize: "1.5rem" }}>
-                  FRG
-                </Typography>
-                <Typography sx={{ fontSize: "3.5rem", fontWeight: "bold", lineHeight: "1" }}>
-                  {displayFRG}
-                </Typography>
-              </Box>
-            </Box>
-
-            <Box sx={{ display: "flex", justifyContent: "center", mt: 4 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={override}
-                    onChange={handleOverrideChange}
-                    color="primary"
-                  />
+        <Grid container spacing={4} sx={{ mt: 3 }}>
+          <Grid item xs={12} md={6}>
+            <TextField
+              label="DSCR"
+              type="number"
+              fullWidth
+              sx={{ mb: 2 }}
+              error={Boolean(dscrError)}
+              helperText={dscrError}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                if (isNaN(value)) {
+                  setDscr("");
+                  setDscrError("");
+                } else if (value < 0) {
+                  setDscr(value);
+                  setDscrError("Invalid entry; enter a number ≥ 0.");
+                } else {
+                  setDscr(value);
+                  setDscrError("");
                 }
-                label="Override"
-                sx={{ fontWeight: "bold" }}
-              />
-            </Box>
-
-            {override && (
-              <Grid container spacing={4} sx={{ mt: 1, justifyContent: "center" }}>
-                <Grid item xs={12} md={4}>
-                  <TextField
-                    label="Override BRG"
-                    type="number"
-                    fullWidth
-                    value={overrideBRG}
-                    onChange={(e) =>
-                      setOverrideBRG(parseFloat(e.target.value) || "")
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <TextField
-                    label="Override FRG"
-                    type="number"
-                    fullWidth
-                    value={overrideFRG}
-                    onChange={(e) =>
-                      setOverrideFRG(parseFloat(e.target.value) || "")
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    label="Justification for Override"
-                    multiline
-                    rows={4}
-                    fullWidth
-                    value={justification}
-                    onChange={(e) => setJustification(e.target.value)}
-                    placeholder="Provide a detailed justification for overriding the calculated values."
-                    required={override}
-                  />
-                </Grid>
-              </Grid>
-            )}
-
-            <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", mt: 4 }}>
-              <Button
-                variant="contained"
-                color="primary"
-                size="large"
-                disabled={!isFormValid || isSubmitting}
-                onClick={handleSubmit}
-                sx={{
-                  bgcolor: "#003087",
-                  color: "white",
-                  padding: "15px 50px", // Increased padding for a larger button
-                  fontWeight: "bold",
-                  borderRadius: "8px",
-                  minWidth: "250px",
-                  "&:hover": {
-                    bgcolor: "#002266",
-                  },
-                }}
-              >
-                {isSubmitting ? "Submitting..." : "Approve"}
-              </Button>
-              {!isFormValid && (
-                <Typography variant="body2" color="error" sx={{ mt: 1 }}>
-                  Please fill in the following: {missingFields.join(", ")}
-                </Typography>
-              )}
-            </Box>
-          </>
+              }}
+            />
+            <TextField
+              label="Occupancy Rate (%)"
+              type="number"
+              fullWidth
+              sx={{ mb: 2 }}
+              error={Boolean(occupancyError)}
+              helperText={occupancyError}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                if (isNaN(value)) {
+                  setOccupancy("");
+                  setOccupancyError("");
+                } else if (value < 0 || value > 100) {
+                  setOccupancy(value);
+                  setOccupancyError("Enter a number between 0 and 100.");
+                } else {
+                  setOccupancy(value);
+                  setOccupancyError("");
+                }
+              }}
+            />
+            <TextField
+              label="LTV (%)"
+              type="number"
+              fullWidth
+              sx={{ mb: 2 }}
+              error={Boolean(ltvError)}
+              helperText={ltvError}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                if (isNaN(value)) {
+                  setLtv("");
+                  setLtvError("");
+                } else if (value < 0) {
+                  setLtv(value);
+                  setLtvError("Enter a number ≥ 0.");
+                } else {
+                  setLtv(value);
+                  setLtvError("");
+                }
+              }}
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            {getQualitativeInputs(selectedProperty).map((input) => (
+              <FormControl key={input} fullWidth sx={{ mb: 2 }} variant="outlined">
+                <InputLabel>{input}</InputLabel>
+                <Select
+                  value={qualitativeValues[input] || ""}
+                  onChange={(e) =>
+                    setQualitativeValues((prev) => ({
+                      ...prev,
+                      [input]: parseInt(e.target.value as string),
+                    }))
+                  }
+                  label={input}
+                  displayEmpty
+                  sx={{ textAlign: "left" }}
+                >
+                  {qualitativeOptions.map((option) => (
+                    <MenuItem key={option} value={option}>
+                      {option}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            ))}
+          </Grid>
+        </Grid>
         )}
+        
+        <Box sx={{ display: "flex", justifyContent: "center", gap: 6, mt: 4 }}>
+          <Box
+            sx={{
+              bgcolor: "#449DF8",
+              color: "black",
+              padding: "25px 50px",
+              textAlign: "center",
+              fontWeight: "bold",
+              borderRadius: "15px",
+              boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.2)",
+              width: "220px",
+              height: "120px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+            }}
+          >
+            <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1, fontSize: "1.5rem" }}>
+              BRG
+            </Typography>
+            <Typography sx={{ fontSize: "3.5rem", fontWeight: "bold", lineHeight: "1" }}>
+              {displayBRG}
+            </Typography>
+          </Box>
+          <Box
+            sx={{
+              bgcolor: "#F89F44",
+              color: "black",
+              padding: "25px 50px",
+              textAlign: "center",
+              fontWeight: "bold",
+              borderRadius: "15px",
+              boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.2)",
+              width: "220px",
+              height: "120px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+            }}
+          >
+            <Typography variant="h6" sx={{ fontWeight: "bold", mb: 1, fontSize: "1.5rem" }}>
+              FRG
+            </Typography>
+            <Typography sx={{ fontSize: "3.5rem", fontWeight: "bold", lineHeight: "1" }}>
+              {displayFRG}
+            </Typography>
+          </Box>
+        </Box>
+        <Box sx={{ display: "flex", justifyContent: "center", mt: 4 }}>
+          <FormControlLabel
+            control={<Switch checked={override} onChange={handleOverrideChange} color="primary" />}
+            label="Override"
+            sx={{ fontWeight: "bold" }}
+          />
+        </Box>
+        {override && (
+          <Grid container spacing={4} sx={{ mt: 1, justifyContent: "center" }}>
+            <Grid item xs={12} md={4}>
+              <TextField
+                label="Override BRG"
+                type="number"
+                fullWidth
+                value={overrideBRG}
+                onChange={(e) => setOverrideBRG(parseFloat(e.target.value) || "")}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                label="Override FRG"
+                type="number"
+                fullWidth
+                value={overrideFRG}
+                onChange={(e) => setOverrideFRG(parseFloat(e.target.value) || "")}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Justification for Override"
+                multiline
+                rows={4}
+                fullWidth
+                value={justification}
+                onChange={(e) => setJustification(e.target.value)}
+                placeholder="Provide a detailed justification for overriding the calculated values."
+                required={override}
+              />
+            </Grid>
+          </Grid>
+        )}
+        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", mt: 4 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            size="large"
+            disabled={!isFormValid || isSubmitting}
+            onClick={handleSubmit}
+            sx={{
+              bgcolor: "#003087",
+              color: "white",
+              padding: "15px 50px",
+              fontWeight: "bold",
+              borderRadius: "8px",
+              minWidth: "250px",
+              "&:hover": { bgcolor: "#002266" },
+            }}
+          >
+            {isSubmitting ? "Submitting..." : "Approve"}
+          </Button>
+          {!isFormValid && (
+            <Typography variant="body2" color="error" sx={{ mt: 1 }}>
+              Please fill in the following: {missingFields.join(", ")}
+            </Typography>
+          )}
+        </Box>
       </Container>
       <Snackbar open={snackbarOpen} autoHideDuration={6000} onClose={handleSnackbarClose}>
-        <Alert onClose={handleSnackbarClose} severity={snackbarSeverity} sx={{ width: '100%' }}>
+        <Alert onClose={handleSnackbarClose} severity={snackbarSeverity} sx={{ width: "100%" }}>
           {snackbarMessage}
         </Alert>
       </Snackbar>
     </>
-  
   );
-  
 };
 
 export default CRE;

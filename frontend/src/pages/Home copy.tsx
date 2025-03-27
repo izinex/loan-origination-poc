@@ -1,8 +1,7 @@
 import React, { useState } from "react";
-import { Container, Typography, MenuItem, Select, FormControl, InputLabel, Box } from "@mui/material";
+import { Container, Typography, MenuItem, Select, FormControl, InputLabel, Box, SelectChangeEvent } from "@mui/material";
 import Header from "../components/Header";
-import { useNavigate, useLocation } from "react-router-dom";
-import { SelectChangeEvent } from "@mui/material/Select";
+import { useNavigate } from "react-router-dom";
 
 const Home: React.FC = () => {
   const [business, setBusiness] = useState("");
@@ -12,9 +11,9 @@ const Home: React.FC = () => {
     const selectedBusiness = event.target.value;
     setBusiness(selectedBusiness);
     if (selectedBusiness === "CRE") {
-      navigate("/cre", { state: { lineOfBusiness: selectedBusiness } });
+      navigate("/cre");
     }
-    // Additional navigation for other lines can be added here.
+    // Add additional navigation logic for other options if needed.
   };
 
   return (
@@ -27,6 +26,8 @@ const Home: React.FC = () => {
         <Typography variant="subtitle1" sx={{ mb: 2 }}>
           Select Your Line of Business
         </Typography>
+
+        {/* Improved Dropdown with Label Animation */}
         <Box sx={{ display: "flex", justifyContent: "center" }}>
           <FormControl sx={{ minWidth: 300 }} variant="outlined">
             <InputLabel id="business-label">Select Business</InputLabel>
