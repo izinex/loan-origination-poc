@@ -31,7 +31,8 @@ def get_snowflake_connection():
         schema="DRRSCHEMA"
     )
 
-# Updated LoanApplication model with new qualitative metric fields and lineOfBusiness
+# Updated LoanApplication model with new fields for borrower and loanId,
+# plus the additional qualitative metric fields.
 class LoanApplication(BaseModel):
     lineOfBusiness: str
     propertyType: str
@@ -39,8 +40,10 @@ class LoanApplication(BaseModel):
     dscr: float
     occupancy: float
     ltv: float
+    borrower: str | None = None
+    loanId: str | None = None
 
-    # Existing qualitative ratings (optional)
+    # Qualitative rating fields (optional)
     LeaseExpiration: int | None = None
     TenantRating: int | None = None
     AccessToCapitalMarkets: int | None = None
@@ -51,7 +54,7 @@ class LoanApplication(BaseModel):
     EconomicOutlook: int | None = None
     CollateralValue: int | None = None
 
-    # New qualitative metric values (optional)
+    # New qualitative metric value fields (optional)
     LeaseExpiration_Value: float | None = None
     TenantRating_Value: float | None = None
     AccessToCapitalMarkets_Value: float | None = None
@@ -90,15 +93,16 @@ def submit_loan(data: LoanApplication):
         loan_id = str(uuid.uuid4())
         submitted_at = datetime.now()
 
-        # Build dictionary of all non-null fields from the incoming data
+        # Build dictionary of all non-null fields from the incoming data.
+        # This will automatically include borrower and loanId if provided.
         all_fields = {k: v for k, v in data.dict().items() if v is not None}
-        # Add submitted_at field dynamically
+        # Add the submitted timestamp.
         all_fields["SUBMITTED_AT"] = submitted_at
 
-        # Build the SQL query dynamically:
-        # Create a list of column names with "ID" as the first column.
+        # Build the SQL query dynamically.
+        # Prepend "ID" to the keys from all_fields.
         fields = ", ".join(["ID"] + list(all_fields.keys()))
-        # Create placeholders for each value
+        # Create placeholders (%s) for each value.
         placeholders = ", ".join(["%s"] * (len(all_fields) + 1))
 
         query = f"""

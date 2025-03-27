@@ -173,6 +173,10 @@ const CRE: React.FC = () => {
   const [qualitativeValues, setQualitativeValues] = useState<Record<string, number>>({});
   const [qualitativeMetrics, setQualitativeMetrics] = useState<Record<string, string>>({});
 
+  // NEW: Borrower and Loan ID
+  const [borrower, setBorrower] = useState<string>("");
+  const [loanId, setLoanId] = useState<string>("");
+
   // Override and feedback states
   const [override, setOverride] = useState<boolean>(false);
   const [overrideBRG, setOverrideBRG] = useState<number | "">("");
@@ -320,6 +324,8 @@ const CRE: React.FC = () => {
     dscr: Number(dscr),
     occupancy: Number(occupancy),
     ltv: Number(ltv),
+    borrower: borrower,   // NEW: Borrower field
+    loanId: loanId,       // NEW: Loan ID field
     ...qualitativeData,
     ...qualitativeMetricsData,
     quantitative_brg: quantitativeBRG,
@@ -364,6 +370,31 @@ const CRE: React.FC = () => {
         <Typography variant="h5" sx={{ fontWeight: "bold", color: "#003087", textAlign: "center", mb: 3 }}>
           Dual Risk Rating - Commercial Real Estate (CRE)
         </Typography>
+        {/* NEW: Borrower and Loan ID fields */}
+        <Grid container spacing={2} sx={{ mt: 4, justifyContent: "center" }}>
+          <Grid item xs={12} md={6}>
+              <TextField
+                label="Borrower"
+                variant="outlined"
+                value={borrower}
+                onChange={(e) => setBorrower(e.target.value)}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <TextField
+                label="Loan ID"
+                variant="outlined"
+                value={loanId}
+                onChange={(e) => setLoanId(e.target.value)}
+                fullWidth
+              />
+            </Grid>
+        </Grid>
+        
+        {/* Additional spacing between Borrower/Loan ID and Property Type/Loan Type */}
+        <Box sx={{ mt: 6 }} />
+
         <Grid container spacing={4} sx={{ justifyContent: "center", mb: 3 }}>
           <Grid item xs={12} md={5}>
             <FormControl fullWidth>
@@ -571,6 +602,7 @@ const CRE: React.FC = () => {
             </Typography>
           </Box>
         </Box>
+      
         <Box sx={{ display: "flex", justifyContent: "center", mt: 4 }}>
           <FormControlLabel
             control={<Switch checked={override} onChange={handleOverrideChange} color="primary" />}
